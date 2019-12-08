@@ -1,0 +1,7 @@
+{
+  "ServerIP": "localhost",
+  "ServerPort": 8080,
+  "ProxyRedis": {
+    "Server": "127.0.0.1:6379"
+  }
+}
