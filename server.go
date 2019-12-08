@@ -19,7 +19,7 @@ func Init() {
 	engine.Run()
 }
 
-func InitServer() {
+func StartServer() {
 	server, err := net.Listen("tcp", fmt.Sprintf("%s:%d", settings.AppConfig.ServerIP, settings.AppConfig.ServerPort))
 	if err != nil {
 		panic(err)
@@ -41,5 +41,5 @@ func InitServer() {
 
 func main() {
 	Init()
-	InitServer()
+	StartServer()
 }
