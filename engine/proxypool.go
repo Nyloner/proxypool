@@ -29,11 +29,11 @@ func Run() {
 		}
 	}()
 	var verifyTicker = time.NewTicker(time.Duration(VerifyTimeInterval) * time.Second)
-	go ProxyVerify()
+	go VerifyProxy()
 	go func() {
 		for t := range verifyTicker.C {
 			logs.Info("proxypool run verify at %#v", t.String())
-			go ProxyVerify()
+			go VerifyProxy()
 		}
 	}()
 }
@@ -78,7 +78,7 @@ func CrawlProxy() {
 	logs.Info("Run spiders success.")
 }
 
-func ProxyVerify() {
+func VerifyProxy() {
 	ips, err := redis.ProxyRedisCli.ZRange(RedisProxyPoolKey, 0, -1).Result()
 	if err != nil {
 		logs.Warn("ProxyVerify load proxypool fail.[err]=%#v", err)
