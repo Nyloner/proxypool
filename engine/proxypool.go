@@ -16,8 +16,8 @@ import (
 
 var ProxyCheckAPI = "https://www.nyloner.cn/checkip"
 var RedisProxyPoolKey = "proxy_pool"
-var CrawlTimeInterval = 30
-var VerifyTimeInterval = 40
+var CrawlTimeInterval = 120
+var VerifyTimeInterval = 30
 
 func Run() {
 	var crawlTicker = time.NewTicker(time.Duration(CrawlTimeInterval) * time.Second)

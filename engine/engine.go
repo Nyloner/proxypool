@@ -14,6 +14,7 @@ import (
 
 const BufSize = 1024
 const ProxyRetryMaxTimes = 3
+const ProxyLoadSize = 10
 
 func HandleProxyConnect(conn net.Conn) {
 	defer conn.Close()
@@ -82,7 +83,7 @@ func createProxyConn() (pConn net.Conn, err error) {
 		conn, err := net.DialTimeout("tcp", proxyIP, time.Second*1)
 		if err != nil {
 			conn_times += 1
-			logs.Warn("createProxyConn connect fail.[conn_times]=%#v", conn_times)
+			logs.Warn("createProxyConn connect fail.[conn_times]=%#v [err]=%#v", conn_times, err.Error())
 			continue
 		}
 		logs.Info("loadProxyConn success.[proxyIP]=%#v", proxyIP)
@@ -92,13 +93,14 @@ func createProxyConn() (pConn net.Conn, err error) {
 }
 
 func loadProxyIP() (ip string, err error) {
-	ips, err := redis.ProxyRedisCli.ZRevRange(RedisProxyPoolKey, 0, 10).Result()
+	ips, err := redis.ProxyRedisCli.ZRevRange(RedisProxyPoolKey, 0, ProxyLoadSize).Result()
 	if err != nil {
 		return "", err
 	}
 	if len(ips) == 0 {
 		return "", fmt.Errorf("loadProxyIP fail,ip_pool empty")
 	}
+	logs.Info("loadProxyIP from redis success.[ips]=%#v", ips)
 	index := rand.Int() % len(ips)
 	return ips[index], nil
 }
