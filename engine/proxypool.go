@@ -16,13 +16,24 @@ import (
 
 var ProxyCheckAPI = "https://www.nyloner.cn/checkip"
 var RedisProxyPoolKey = "proxy_pool"
+var CrawlTimeInterval = 30
+var VerifyTimeInterval = 40
 
 func Run() {
-	var crawlTicker = time.NewTicker(30 * time.Second)
+	var crawlTicker = time.NewTicker(time.Duration(CrawlTimeInterval) * time.Second)
+	go CrawlProxy()
 	go func() {
 		for t := range crawlTicker.C {
-			logs.Info("proxypool run crawler at %#v", t)
+			logs.Info("proxypool run crawler at %#v", t.String())
 			go CrawlProxy()
+		}
+	}()
+	var verifyTicker = time.NewTicker(time.Duration(VerifyTimeInterval) * time.Second)
+	go ProxyVerify()
+	go func() {
+		for t := range verifyTicker.C {
+			logs.Info("proxypool run verify at %#v", t.String())
+			go ProxyVerify()
 		}
 	}()
 }
@@ -46,47 +57,75 @@ func CrawlProxy() {
 		oProxies = append(oProxies, proxies...)
 		return true
 	})
-	proxyCh := make(chan string, len(oProxies))
 	for _, p := range oProxies {
 		proxyIP := p
 		wg.Wrap(func() {
 			effective := IsProxyEnable(fmt.Sprintf("http://%s", proxyIP))
 			if effective {
-				proxyCh <- proxyIP
+				_, err := redis.ProxyRedisCli.ZAdd(RedisProxyPoolKey, &redisv7.Z{
+					Member: proxyIP,
+					Score:  float64(time.Now().Unix()),
+				}).Result()
+				if err != nil {
+					logs.Warn("CrawlProxy insert proxy to pool fail.[proxyIP]=%#v [err]=%#v", proxyIP, err)
+					return
+				}
+				logs.Info("CrawlProxy add proxy success.[proxyIP]=%#v", proxyIP)
 			}
 		})
 	}
 	wg.Wait()
-	close(proxyCh)
-	for proxyIP := range proxyCh {
-		_, err := redis.ProxyRedisCli.ZAdd(RedisProxyPoolKey, &redisv7.Z{
-			Member: proxyIP,
-			Score:  float64(time.Now().Unix()),
-		}).Result()
-		if err != nil {
-			logs.Warn("CrawlProxy insert proxy to pool fail.[proxyIP]=%#v [err]=%#v", proxyIP, err)
-			continue
-		}
-		logs.Info("CrawlProxy crawl proxy success.[proxyIP]=%#v", proxyIP)
-	}
 	logs.Info("Run spiders success.")
+}
+
+func ProxyVerify() {
+	ips, err := redis.ProxyRedisCli.ZRange(RedisProxyPoolKey, 0, -1).Result()
+	if err != nil {
+		logs.Warn("ProxyVerify load proxypool fail.[err]=%#v", err)
+		return
+	}
+	wg := utils.WaitWrapper{}
+	for _, ip := range ips {
+		proxyIP := ip
+		wg.Wrap(func() {
+			effective := IsProxyEnable(fmt.Sprintf("http://%s", proxyIP))
+			if !effective {
+				_, err := redis.ProxyRedisCli.ZRem(RedisProxyPoolKey, proxyIP).Result()
+				if err != nil {
+					logs.Warn("ProxyVerify remove proxy fail.[proxyIP]=%#v [err]=%#v", proxyIP, err)
+				}
+				logs.Info("ProxyVerify remove disabled proxy success.[proxyIP]=%#v", proxyIP)
+				return
+			}
+			_, err := redis.ProxyRedisCli.ZAdd(RedisProxyPoolKey, &redisv7.Z{
+				Member: proxyIP,
+				Score:  float64(time.Now().Unix()),
+			}).Result()
+			if err != nil {
+				logs.Warn("ProxyVerify add proxy fail.[proxyIP]=%#v [err]=%#v", proxyIP, err)
+				return
+			}
+			logs.Info("ProxyVerify verify proxy success.[proxyIP]=%#v", proxyIP)
+		})
+	}
+	wg.Wait()
 }
 
 func IsProxyEnable(proxy string) bool {
 	resp, err := utils.GETByProxy(ProxyCheckAPI, proxy)
 	if err != nil {
-		logs.Warn("VerifyProxy fail.[proxy]=%#v [err]=%#v", proxy, err)
+		logs.Warn("IsProxyEnable fail.[proxy]=%#v [err]=%#v", proxy, err.Error())
 		return false
 	}
 	var proxyResp struct {
 		RemoteIP string `json:"remote_ip"`
 	}
 	if err := json.Unmarshal(resp.Content(), &proxyResp); err != nil {
-		logs.Warn("VerifyProxy parse resp fail.[proxy]=%#v [err]=%#v", proxy, err)
+		logs.Warn("IsProxyEnable parse resp fail.[proxy]=%#v [err]=%#v", proxy, err.Error())
 		return false
 	}
 	if strings.Contains(proxy, proxyResp.RemoteIP) {
-		logs.Info("VerifyProxy success.[proxy]=%#v", proxy)
+		logs.Info("IsProxyEnable success.[proxy]=%#v", proxy)
 		return true
 	}
 	return false

@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/Nyloner/proxypool/common/redis"
+	"github.com/Nyloner/proxypool/common/utils"
 	"github.com/Nyloner/proxypool/logs"
 )
 
 const BufSize = 1024
+const ProxyRetryMaxTimes = 3
 
 func HandleProxyConnect(conn net.Conn) {
 	defer conn.Close()
@@ -21,14 +23,24 @@ func HandleProxyConnect(conn net.Conn) {
 		return
 	}
 	defer proxyConn.Close()
-	go copySocketData(conn, proxyConn)
-	copySocketData(proxyConn, conn)
+	wg := utils.WaitWrapper{}
+	wg.Wrap(func() {
+		copySocketData(conn, proxyConn)
+	})
+	wg.Wrap(func() {
+		copySocketData(proxyConn, conn)
+	})
+	wg.Wait()
 	logs.Info("HandleProxyConnect complete.[source]=%#v [proxy]=%#v", conn.RemoteAddr().String(), proxyConn.RemoteAddr().String())
 }
 
 func copySocketData(src net.Conn, dst net.Conn) {
 	buf := make([]byte, BufSize)
 	for {
+		err := src.SetReadDeadline(time.Now().Add(time.Second * 10))
+		if err != nil {
+			logs.Warn("copySocketData SetReadDeadline fail.[err]=%#v", err)
+		}
 		readSize, err := src.Read(buf)
 		if err != nil {
 			if err == io.EOF {
@@ -39,6 +51,10 @@ func copySocketData(src net.Conn, dst net.Conn) {
 			}
 		}
 		if readSize > 0 {
+			err := dst.SetWriteDeadline(time.Now().Add(time.Second * 10))
+			if err != nil {
+				logs.Warn("copySocketData SetWriteDeadline fail.[err]=%#v", err)
+			}
 			writeSize, err := dst.Write(buf[0:readSize])
 			if err != nil {
 				logs.Info("copySocketData write fail.[src]=%#v [dst]=%#v [err]=%#v", src.RemoteAddr().String(), dst.RemoteAddr().String(), err.Error())
@@ -57,12 +73,22 @@ func createProxyConn() (pConn net.Conn, err error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.DialTimeout("tcp", proxyIP, time.Second*1)
-	if err != nil {
-		return nil, fmt.Errorf("loadProxyConn create proxy connection fail.[err]=%#v", err.Error())
+	conn_times := 0
+	for {
+		if conn_times >= ProxyRetryMaxTimes {
+			logs.Warn("createProxyConn fail, over max retry times.")
+			break
+		}
+		conn, err := net.DialTimeout("tcp", proxyIP, time.Second*1)
+		if err != nil {
+			conn_times += 1
+			logs.Warn("createProxyConn connect fail.[conn_times]=%#v", conn_times)
+			continue
+		}
+		logs.Info("loadProxyConn success.[proxyIP]=%#v", proxyIP)
+		return conn, nil
 	}
-	logs.Info("loadProxyConn success.[proxyIP]=%#v", proxyIP)
-	return conn, nil
+	return nil, fmt.Errorf("loadProxyConn create proxy connection fail.")
 }
 
 func loadProxyIP() (ip string, err error) {
