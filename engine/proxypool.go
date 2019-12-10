@@ -41,7 +41,8 @@ func Run() {
 func CrawlProxy() {
 	sMap := sync.Map{}
 	wg := utils.WaitWrapper{}
-	for _, spider := range spiders.Spiders {
+	for _, s := range spiders.Spiders {
+		spider := s
 		wg.Wrap(func() {
 			res := spider.Crawl()
 			logs.Info("spider run %#v success.[res]=%#v", spider.Name(), res)
