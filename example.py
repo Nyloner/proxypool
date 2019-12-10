@@ -6,7 +6,7 @@ proxies = {
     'https': 'http://127.0.0.1:8080',
 }
 
-url = 'https://myip.ipip.net/'
+url = 'http://pv.sohu.com/cityjson'
 html = requests.get(url, proxies=proxies,timeout=10).text
 print(html)
 
