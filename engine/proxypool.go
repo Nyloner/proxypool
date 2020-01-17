@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,7 +13,9 @@ import (
 	redisv7 "github.com/go-redis/redis/v7"
 )
 
-var ProxyCheckAPI = "https://www.nyloner.cn/checkip"
+// var ProxyCheckAPI = "http://pv.sohu.com/cityjson"
+// var ProxyCheckAPI = "http://dev.kdlapi.com/testproxy"
+var ProxyCheckAPI = "https://123.206.23.237/checkip"
 var RedisProxyPoolKey = "proxy_pool"
 var CrawlTimeInterval = 120
 var VerifyTimeInterval = 30
@@ -58,10 +59,15 @@ func CrawlProxy() {
 		oProxies = append(oProxies, proxies...)
 		return true
 	})
+	limitC := make(chan int, 100)
 	for _, p := range oProxies {
 		proxyIP := p
 		wg.Wrap(func() {
-			effective := IsProxyEnable(fmt.Sprintf("http://%s", proxyIP))
+			limitC <- 1
+			defer func() {
+				<-limitC
+			}()
+			effective := IsProxyAvailable(proxyIP)
 			if effective {
 				_, err := redis.ProxyRedisCli.ZAdd(RedisProxyPoolKey, &redisv7.Z{
 					Member: proxyIP,
@@ -76,6 +82,7 @@ func CrawlProxy() {
 		})
 	}
 	wg.Wait()
+	close(limitC)
 	logs.Info("Run spiders success.")
 }
 
@@ -89,7 +96,7 @@ func VerifyProxy() {
 	for _, ip := range ips {
 		proxyIP := ip
 		wg.Wrap(func() {
-			effective := IsProxyEnable(fmt.Sprintf("http://%s", proxyIP))
+			effective := IsProxyAvailable(proxyIP)
 			if !effective {
 				_, err := redis.ProxyRedisCli.ZRem(RedisProxyPoolKey, proxyIP).Result()
 				if err != nil {
@@ -112,22 +119,19 @@ func VerifyProxy() {
 	wg.Wait()
 }
 
-func IsProxyEnable(proxy string) bool {
-	resp, err := utils.GETByProxy(ProxyCheckAPI, proxy)
+func IsProxyAvailable(proxyAddress string) bool {
+	httpProxy := fmt.Sprintf("http://%s", proxyAddress)
+	resp, err := utils.GETByProxy(ProxyCheckAPI, httpProxy)
 	if err != nil {
-		logs.Warn("IsProxyEnable fail.[proxy]=%#v [err]=%#v", proxy, err.Error())
+		logs.Warn("IsProxyAvailable run fail.[proxy]=%#v [err]=%#v", httpProxy, err.Error())
 		return false
 	}
-	var proxyResp struct {
-		RemoteIP string `json:"remote_ip"`
-	}
-	if err := json.Unmarshal(resp.Content(), &proxyResp); err != nil {
-		logs.Warn("IsProxyEnable parse resp fail.[proxy]=%#v [err]=%#v", proxy, err.Error())
-		return false
-	}
-	if strings.Contains(proxy, proxyResp.RemoteIP) {
-		logs.Info("IsProxyEnable success.[proxy]=%#v", proxy)
+	content := resp.Text()
+	IP := strings.Split(proxyAddress, ":")[0]
+	if strings.Contains(content, IP) {
+		logs.Info("IsProxyAvailable success.[proxy]=%#v [content]=%s", httpProxy, content)
 		return true
 	}
+	logs.Info("IsProxyAvailable verify fail.[proxy]=%#v [content]=%s", httpProxy, content)
 	return false
 }
